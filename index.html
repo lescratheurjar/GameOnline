@@ -1,86 +1,123 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>2D Shooter</title>
+  <title>Top-Down Shooter .io v2</title>
   <style>
-    body { margin: 0; overflow: hidden; background: #111; }
+    body { margin: 0; overflow: hidden; background: #111; color: #fff; font-family: sans-serif; }
+    #ui { position: absolute; top: 10px; left: 10px; z-index: 10; }
+    #ui div { margin-bottom: 4px; }
     canvas { display: block; margin: auto; background: #222; }
   </style>
 </head>
 <body>
-<canvas id="gameCanvas" width="800" height="600"></canvas>
+  <div id="ui">
+    <div id="health">Vie : 100</div>
+    <div id="score">Score : 0</div>
+  </div>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
 
-<!-- 🔸 Socket.IO client depuis CDN -->
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<script>
-  const socket = io("https://server-c8jy.onrender.com"); // ton backend
-
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>
+  const socket = io("https://server-c8jy.onrender.com");
   const canvas = document.getElementById("gameCanvas");
   const ctx = canvas.getContext("2d");
+  const uiHealth = document.getElementById("health");
+  const uiScore = document.getElementById("score");
 
   let playerId = null;
   let players = {};
   let bullets = [];
+  let inputs = { up:false, down:false, left:false, right:false };
+  let shootReady = true;
+  const shootCooldown = 300; // ms
+  let localState = { x:400, y:300, vx:0, vy:0, angle:0, health:100, score:0 };
 
-  // Mouvements clavier
-  document.addEventListener("keydown", (e) => {
-    const input = { up: false, down: false, left: false, right: false };
-    if (e.key === "w") input.up = true;
-    if (e.key === "s") input.down = true;
-    if (e.key === "a") input.left = true;
-    if (e.key === "d") input.right = true;
-    socket.emit("move", input);
+  // envoi inputs de déplacement à intervalle fixe
+  setInterval(() => {
+    socket.emit("move", inputs);
+    socket.emit("aim", localState.angle);
+  }, 1000/30);
+
+  // clavier
+  window.addEventListener("keydown", e => {
+    if (e.key==="w") inputs.up = true;
+    if (e.key==="s") inputs.down = true;
+    if (e.key==="a") inputs.left = true;
+    if (e.key==="d") inputs.right = true;
+    if (e.key===" " && shootReady) {
+      shootReady = false;
+      socket.emit("shoot");
+      setTimeout(()=> shootReady = true, shootCooldown);
+    }
+  });
+  window.addEventListener("keyup", e => {
+    if (e.key==="w") inputs.up = false;
+    if (e.key==="s") inputs.down = false;
+    if (e.key==="a") inputs.left = false;
+    if (e.key==="d") inputs.right = false;
   });
 
-  // Vise avec la souris
-  document.addEventListener("mousemove", (e) => {
+  // visée
+  canvas.addEventListener("mousemove", e => {
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
-    const angle = Math.atan2(my - 300, mx - 400);
-    socket.emit("aim", angle);
+    localState.angle = Math.atan2(my - localState.y, mx - localState.x);
   });
 
-  // Tir
-  document.addEventListener("click", () => {
-    socket.emit("shoot");
+  // réception init & état
+  socket.on("init", id => { playerId = id; });
+  socket.on("state", state => {
+    players = state.players;
+    bullets = state.bullets;
+    if (players[playerId]) {
+      localState.health = players[playerId].health ?? localState.health;
+      localState.score = players[playerId].score ?? localState.score;
+      uiHealth.textContent = `Vie : ${localState.health}`;
+      uiScore.textContent = `Score : ${localState.score}`;
+      // smooth interpolation
+      const p = players[playerId];
+      localState.x += (p.x - localState.x) * 0.2;
+      localState.y += (p.y - localState.y) * 0.2;
+    }
   });
 
-  // Réception des données
-  socket.on("init", (id) => {
-    playerId = id;
-  });
-
-  socket.on("state", (serverState) => {
-    players = serverState.players;
-    bullets = serverState.bullets;
-  });
-
-  // Rendu
+  // rendu
   function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
 
+    // décor simple : grille
+    ctx.strokeStyle = "#333";
+    for (let x=0;x<800;x+=50){
+      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,600); ctx.stroke();
+    }
+    for (let y=0;y<600;y+=50){
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(800,y); ctx.stroke();
+    }
+
+    // joueurs
     for (const id in players) {
       const p = players[id];
       ctx.save();
-      ctx.translate(p.x, p.y);
+      ctx.translate(id===playerId ? localState.x : p.x, id===playerId ? localState.y : p.y);
       ctx.rotate(p.angle);
-      ctx.fillStyle = id === playerId ? "cyan" : "white";
-      ctx.fillRect(-10, -10, 20, 20);
+      ctx.fillStyle = (id===playerId ? "#0ff" : "#fff");
+      ctx.fillRect(-12,-12,24,24);
       ctx.restore();
     }
 
-    ctx.fillStyle = "yellow";
+    // balles
+    ctx.fillStyle = "#ff0";
     bullets.forEach(b => {
       ctx.beginPath();
-      ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
+      ctx.arc(b.x, b.y, 5, 0,Math.PI*2);
       ctx.fill();
     });
 
     requestAnimationFrame(draw);
   }
   draw();
-</script>
+  </script>
 </body>
 </html>
