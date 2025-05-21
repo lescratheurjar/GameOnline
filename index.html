@@ -1,0 +1,151 @@
+// === BACKEND (Node.js + Socket.IO) ===
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+const PORT = process.env.PORT || 3000;
+
+app.get("/", (_, res) => {
+  res.send(html); // voir plus bas
+});
+
+let players = {};
+let bullets = [];
+
+io.on("connection", (socket) => {
+  console.log("Player connected:", socket.id);
+  players[socket.id] = { x: 400, y: 300, angle: 0 };
+
+  socket.emit("init", socket.id);
+
+  socket.on("move", (input) => {
+    const speed = 3;
+    let p = players[socket.id];
+    if (!p) return;
+    if (input.up) p.y -= speed;
+    if (input.down) p.y += speed;
+    if (input.left) p.x -= speed;
+    if (input.right) p.x += speed;
+  });
+
+  socket.on("aim", (angle) => {
+    if (players[socket.id]) players[socket.id].angle = angle;
+  });
+
+  socket.on("shoot", () => {
+    const p = players[socket.id];
+    if (!p) return;
+    bullets.push({
+      x: p.x,
+      y: p.y,
+      dx: Math.cos(p.angle) * 6,
+      dy: Math.sin(p.angle) * 6
+    });
+  });
+
+  socket.on("disconnect", () => {
+    console.log("Player disconnected:", socket.id);
+    delete players[socket.id];
+  });
+});
+
+setInterval(() => {
+  // Update bullets
+  bullets.forEach(b => {
+    b.x += b.dx;
+    b.y += b.dy;
+  });
+  bullets = bullets.filter(b => b.x >= 0 && b.x <= 800 && b.y >= 0 && b.y <= 600);
+
+  io.emit("state", { players, bullets });
+}, 1000 / 60);
+
+server.listen(PORT, () => {
+  console.log("Server running on http://localhost:" + PORT);
+});
+
+// === FRONTEND HTML (servi par Express) ===
+const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>2D Top-Down Shooter</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #111; }
+    canvas { display: block; margin: auto; background: #222; }
+  </style>
+</head>
+<body>
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+let playerId = null;
+let players = {};
+let bullets = [];
+
+document.addEventListener("mousemove", (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const angle = Math.atan2(my - 300, mx - 400);
+  socket.emit("aim", angle);
+});
+
+document.addEventListener("keydown", (e) => {
+  const input = { up: false, down: false, left: false, right: false };
+  if (e.key === "w") input.up = true;
+  if (e.key === "s") input.down = true;
+  if (e.key === "a") input.left = true;
+  if (e.key === "d") input.right = true;
+  socket.emit("move", input);
+});
+
+document.addEventListener("click", () => {
+  socket.emit("shoot");
+});
+
+socket.on("init", (id) => {
+  playerId = id;
+});
+
+socket.on("state", (serverState) => {
+  players = serverState.players;
+  bullets = serverState.bullets;
+});
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  for (const id in players) {
+    const p = players[id];
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.angle);
+    ctx.fillStyle = id === playerId ? "cyan" : "white";
+    ctx.fillRect(-10, -10, 20, 20);
+    ctx.restore();
+  }
+
+  ctx.fillStyle = "yellow";
+  bullets.forEach(b => {
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>
+`;
