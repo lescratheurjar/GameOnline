@@ -2,117 +2,113 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Top-Down Shooter .io v2</title>
+  <title>boxioma</title>
   <style>
-    body { margin: 0; overflow: hidden; background: #111; color: #fff; font-family: sans-serif; }
-    #ui { position: absolute; top: 10px; left: 10px; z-index: 10; }
-    #ui div { margin-bottom: 4px; }
-    canvas { display: block; margin: auto; background: #222; }
+    body{margin:0;overflow:hidden;background:#111;color:#fff;font-family:sans-serif;}
+    #ui{position:absolute;top:10px;left:10px;z-index:10;}
+    #minimap{position:absolute;top:10px;right:10px;width:200px;height:150px;border:2px solid #fff;background:#000;}
+    canvas{display:block;margin:auto;background:#222;}
   </style>
 </head>
 <body>
   <div id="ui">
-    <div id="health">Vie : 100</div>
-    <div id="score">Score : 0</div>
+    <div id="health">health:100</div>
+    <div id="score">score:0</div>
   </div>
+  <canvas id="minimap"></canvas>
   <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+  <audio id="sndShoot" src="shoot.wav"></audio>
+  <audio id="sndHit" src="hit.wav"></audio>
+  <audio id="sndPickup" src="pickup.wav"></audio>
 
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
   const socket = io("https://server-c8jy.onrender.com");
-  const canvas = document.getElementById("gameCanvas");
-  const ctx = canvas.getContext("2d");
-  const uiHealth = document.getElementById("health");
-  const uiScore = document.getElementById("score");
+  const cv = document.getElementById("gameCanvas"), ctx = cv.getContext("2d");
+  const mm = document.getElementById("minimap"), mmCtx = mm.getContext("2d");
+  const uiH=document.getElementById("health"), uiS=document.getElementById("score");
+  const sShoot=document.getElementById("sndShoot"), sHit=document.getElementById("sndHit"), sPU=document.getElementById("sndPickup");
 
-  let playerId = null;
-  let players = {};
-  let bullets = [];
-  let inputs = { up:false, down:false, left:false, right:false };
-  let shootReady = true;
-  const shootCooldown = 300; // ms
-  let localState = { x:400, y:300, vx:0, vy:0, angle:0, health:100, score:0 };
+  let id, players={}, bullets=[], MAP, PUs=[];
+  let inps={up:0,down:0,left:0,right:0}, angle=0, shootReady=true;
 
-  // envoi inputs de déplacement à intervalle fixe
-  setInterval(() => {
-    socket.emit("move", inputs);
-    socket.emit("aim", localState.angle);
-  }, 1000/30);
-
-  // clavier
-  window.addEventListener("keydown", e => {
-    if (e.key==="w") inputs.up = true;
-    if (e.key==="s") inputs.down = true;
-    if (e.key==="a") inputs.left = true;
-    if (e.key==="d") inputs.right = true;
-    if (e.key===" " && shootReady) {
-      shootReady = false;
-      socket.emit("shoot");
-      setTimeout(()=> shootReady = true, shootCooldown);
+  // inputs
+  setInterval(()=>{ socket.emit("move",inps); socket.emit("aim",angle); },1000/30);
+  window.onkeydown=e=>{
+    if(e.key=="w") inps.up=1;
+    if(e.key=="s") inps.down=1;
+    if(e.key=="a") inps.left=1;
+    if(e.key=="d") inps.right=1;
+    if(e.key==" " && shootReady){
+      shootReady=false; socket.emit("shoot"); sShoot.play();
+      setTimeout(()=>shootReady=true,300);
     }
-  });
-  window.addEventListener("keyup", e => {
-    if (e.key==="w") inputs.up = false;
-    if (e.key==="s") inputs.down = false;
-    if (e.key==="a") inputs.left = false;
-    if (e.key==="d") inputs.right = false;
-  });
+  };
+  window.onkeyup=e=>{
+    if(e.key=="w") inps.up=0;
+    if(e.key=="s") inps.down=0;
+    if(e.key=="a") inps.left=0;
+    if(e.key=="d") inps.right=0;
+  };
+  cv.onmousemove=e=>{
+    const r=cv.getBoundingClientRect();
+    const mx=e.clientX-r.left, my=e.clientY-r.top;
+    angle=Math.atan2(my-players[id]?.y, mx-players[id]?.x);
+  };
 
-  // visée
-  canvas.addEventListener("mousemove", e => {
-    const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    localState.angle = Math.atan2(my - localState.y, mx - localState.x);
-  });
-
-  // réception init & état
-  socket.on("init", id => { playerId = id; });
-  socket.on("state", state => {
-    players = state.players;
-    bullets = state.bullets;
-    if (players[playerId]) {
-      localState.health = players[playerId].health ?? localState.health;
-      localState.score = players[playerId].score ?? localState.score;
-      uiHealth.textContent = `Vie : ${localState.health}`;
-      uiScore.textContent = `Score : ${localState.score}`;
-      // smooth interpolation
-      const p = players[playerId];
-      localState.x += (p.x - localState.x) * 0.2;
-      localState.y += (p.y - localState.y) * 0.2;
+  socket.on("init", x=>id=x);
+  socket.on("state", st=>{
+    players=st.players; bullets=st.bullets; MAP=st.MAP; PUs=st.POWERUPS;
+    if(players[id]){
+      uiH.textContent="Vie:"+players[id].health;
+      uiS.textContent="Score:"+players[id].score;
     }
   });
 
-  // rendu
-  function draw() {
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-
-    // décor simple : grille
-    ctx.strokeStyle = "#333";
-    for (let x=0;x<800;x+=50){
-      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,600); ctx.stroke();
-    }
-    for (let y=0;y<600;y+=50){
-      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(800,y); ctx.stroke();
-    }
-
+  function draw(){
+    ctx.clearRect(0,0,800,600);
+    // murs
+    ctx.fillStyle="#555";
+    MAP.walls.forEach(w=>ctx.fillRect(w.x,w.y,w.w,w.h));
     // joueurs
-    for (const id in players) {
-      const p = players[id];
+    for(let pid in players){
+      const p=players[pid];
       ctx.save();
-      ctx.translate(id===playerId ? localState.x : p.x, id===playerId ? localState.y : p.y);
-      ctx.rotate(p.angle);
-      ctx.fillStyle = (id===playerId ? "#0ff" : "#fff");
+      ctx.translate(p.x,p.y); ctx.rotate(p.angle);
+      ctx.fillStyle=pid==id?"#0ff":"#fff";
       ctx.fillRect(-12,-12,24,24);
       ctx.restore();
     }
-
     // balles
-    ctx.fillStyle = "#ff0";
-    bullets.forEach(b => {
+    ctx.fillStyle="#ff0";
+    bullets.forEach(b=>ctx.beginPath(),ctx.arc(b.x,b.y,5,0,2*Math.PI),ctx.fill());
+    // powerups
+    PUs.forEach(pu=>{
       ctx.beginPath();
-      ctx.arc(b.x, b.y, 5, 0,Math.PI*2);
+      ctx.arc(pu.x,pu.y,10,0,2*Math.PI);
+      ctx.fillStyle=pu.type=="hp"?"#f00":"#0f0";
       ctx.fill();
+    });
+    // particules (simple: flash on hit)
+    // (À compléter selon tes préférences)
+
+    // minimap
+    mmCtx.clearRect(0,0,200,150);
+    mmCtx.fillStyle="#333"; mmCtx.fillRect(0,0,200,150);
+    // joueurs
+    for(let pid in players){
+      const p=players[pid];
+      mmCtx.fillStyle=pid==id?"#0ff":"#fff";
+      mmCtx.fillRect(p.x/4-3,p.y/4-3,6,6);
+    }
+    // murs
+    mmCtx.fillStyle="#555";
+    MAP.walls.forEach(w=>mmCtx.fillRect(w.x/4,w.y/4,w.w/4,w.h/4));
+    // powerups
+    PUs.forEach(pu=>{
+      mmCtx.fillStyle=pu.type=="hp"?"#f00":"#0f0";
+      mmCtx.fillRect(pu.x/4-4,pu.y/4-4,8,8);
     });
 
     requestAnimationFrame(draw);
