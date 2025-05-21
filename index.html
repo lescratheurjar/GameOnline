@@ -1,1 +1,86 @@
-const socket = io("https://server-c8jy.onrender.com");
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>2D Shooter</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #111; }
+    canvas { display: block; margin: auto; background: #222; }
+  </style>
+</head>
+<body>
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+
+<!-- 🔸 Socket.IO client depuis CDN -->
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+  const socket = io("https://server-c8jy.onrender.com"); // ton backend
+
+  const canvas = document.getElementById("gameCanvas");
+  const ctx = canvas.getContext("2d");
+
+  let playerId = null;
+  let players = {};
+  let bullets = [];
+
+  // Mouvements clavier
+  document.addEventListener("keydown", (e) => {
+    const input = { up: false, down: false, left: false, right: false };
+    if (e.key === "w") input.up = true;
+    if (e.key === "s") input.down = true;
+    if (e.key === "a") input.left = true;
+    if (e.key === "d") input.right = true;
+    socket.emit("move", input);
+  });
+
+  // Vise avec la souris
+  document.addEventListener("mousemove", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const angle = Math.atan2(my - 300, mx - 400);
+    socket.emit("aim", angle);
+  });
+
+  // Tir
+  document.addEventListener("click", () => {
+    socket.emit("shoot");
+  });
+
+  // Réception des données
+  socket.on("init", (id) => {
+    playerId = id;
+  });
+
+  socket.on("state", (serverState) => {
+    players = serverState.players;
+    bullets = serverState.bullets;
+  });
+
+  // Rendu
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    for (const id in players) {
+      const p = players[id];
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.angle);
+      ctx.fillStyle = id === playerId ? "cyan" : "white";
+      ctx.fillRect(-10, -10, 20, 20);
+      ctx.restore();
+    }
+
+    ctx.fillStyle = "yellow";
+    bullets.forEach(b => {
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    requestAnimationFrame(draw);
+  }
+  draw();
+</script>
+</body>
+</html>
